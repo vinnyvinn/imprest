@@ -1,0 +1,240 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Applicant;
+use App\Imprest;
+use DB;
+use Auth;
+use Dompdf\Dompdf;
+use Dompdf\Options;
+use Illuminate\Http\Request;
+use App\PettyCash;
+class ImprestController extends Controller
+{
+    public function unprocessed()
+    {
+        $runinngBalances=PettyCash::where('transaction_type',PettyCash::POSITIVE)
+                    ->orWhere('transaction_type',PettyCash::NEGATE)
+                    ->get();
+
+      if(Auth::user()->role_id == 1){
+        //user
+        $imprests = Imprest::join('Client', 'Client.DCLink', '=', 'imprests.applicant_id')
+                ->join('Project','Project.ProjectLink','=','imprests.project_id')
+                ->whereIn('status',[Imprest::STATUS_APPROVED, Imprest::STATUS_UNPROCESSED])
+                ->where('imprests.requester_id', Auth::user()->sage_id)
+                ->with(['currency.denomination'])
+                ->get(['imprests.*', 'Client.Name','Project.ProjectName']);
+          }elseif (Auth::user()->role_id == 2) {
+            // hod 
+           $imprests = Imprest::join('users', 'users.sage_id', '=' , 'imprests.applicant_id')
+                ->join('Client', 'Client.DCLink', '=', 'users.sage_id')
+                ->join('Project','Project.ProjectLink','=','imprests.project_id')
+                // ->where('users.department_id', Auth::user()->department_id) //anybody with role 2 and head of department.
+
+                ->where('imprests.officer_id',Auth::user()->id)
+                ->where('status', Imprest::STATUS_UNPROCESSED)
+                ->distinct('imprests.imprest_no')
+                ->with(['currency.denomination'])
+                ->get(['imprests.*','Client.Name','Project.ProjectName']);
+
+          }elseif(Auth::user()->role_id==3){
+            //admin 
+
+        $imprests = Imprest::join('Client', 'Client.DCLink', '=', 'imprests.applicant_id') 
+//                ->leftJoin('users', 'users.id', '=' , 'imprests.requester_id')
+                >join('Project','Project.ProjectLink','=','imprests.project_id')
+                //->distinct('imprests.imprest_no')
+                ->where('status', Imprest::STATUS_APPROVED)->where('advance_amount','>=', 5000)
+                ->with(['currency.denomination'])
+                ->get(['imprests.*', 'Client.Name','Project.ProjectName']);
+	dd($imprests);
+          }
+          else{
+            $imprests = Imprest::join('Client','Client.DClink','=','imprests.applicant_id')->where('status', Imprest::STATUS_APPROVED)
+                ->join('Project','Project.ProjectLink','=','imprests.project_id')
+                ->distinct('imprests.imprest_no')
+                ->where('advance_amount','<', 5000)
+                ->with(['currency.denomination'])
+                ->get();
+          }
+
+        return view('imprests.index',['runinngBalances'=>$runinngBalances])->with('imprests', $imprests)->withTitle('Unprocessed');
+    }
+    public function processed()
+    {
+
+        // $imprests = Imprest::join('users','imprests.applicant_id','users.sage_id')
+        //     ->join('Client', 'Client.ucARHRNO', '=', 'users.sage_id')
+        //     ->join('Project','Project.ProjectLink','=','imprests.project_id')
+        //     ->where('imprest.status',Imprest::STATUS_ISSUED)
+        //     ->where('')
+        //     ->with(['currency.denomination'])
+        //     ->get(['imprests.*', 'Client.Name','Project.ProjectName']);
+
+    $imprests = Imprest::join('Client', 'Client.DCLink', '=', 'imprests.applicant_id')
+                ->join('Project','Project.ProjectLink','=','imprests.project_id')
+                ->whereIn('status',[Imprest::STATUS_ISSUED])
+                ->where('imprests.requester_id', Auth::user()->sage_id)
+                ->with(['currency.denomination'])
+                ->get(['imprests.*', 'Client.Name','Project.ProjectName']);
+
+        return view('imprests.index')->with('imprests', $imprests)->withTitle('Processed');
+    }
+
+    public function surrendered()
+    {
+        $imprests = Imprest::join('Client', 'Client.DCLink', '=', 'imprests.applicant_id')
+            ->with(['currency.denomination'])
+            ->where('status', Imprest::STATUS_SURRENDERED)
+            ->get(['imprests.*', 'Client.Name']);
+
+        return view('imprests.index')->with('imprests', $imprests)->withTitle('Surrendered');
+    }
+
+    public function closed()
+    {
+        $imprests = Imprest::join('Client', 'Client.DCLink', '=', 'imprests.applicant_id')
+            ->where('status', Imprest::STATUS_CLOSED)
+            ->with(['currency.denomination'])
+            ->get(['imprests.*', 'Client.Name']);
+
+        return view('imprests.index')->with('imprests', $imprests)->withTitle('Closed');
+    }
+
+    public function printImprest($id)
+    {
+        $columns = [
+            'imprests.*', 'Client.Name','Client.ucARHRNO','Project.ProjectCode', '_rtblAgents.cAgentName','departments.name'
+          
+        ];
+        $columns[] = 'Client.' . env('DEPARTMENT_UDF');
+        $columns[] = 'Client.' . env('DESIGNATION_UDF');
+        $columns[] = 'Client.' . env('PERSONAL_NUMBER_UDF');
+
+
+        $imprests = Imprest::join('Client', 'Client.DCLink', '=', 'imprests.applicant_id')
+            ->join('Project', 'Project.ProjectLink', '=', 'imprests.project_id', 'left')
+            ->join('_rtblAgents', '_rtblAgents.idAgents', '=', 'imprests.officer_id', 'left')
+            ->join('departments', 'departments.user_id', '=', 'imprests.officer_id','right')
+            ->with(['currency.denomination'])
+            ->where('imprests.id', $id)
+            ->firstOrFail($columns);
+        $view = view('report.warant')
+            ->withDesignation(env('DESIGNATION_UDF'))
+            ->withDepartment(env('DEPARTMENT_UDF'))
+            ->withPersonal(env('PERSONAL_NUMBER_UDF'))
+            ->withImprest($imprests)
+            ->render();
+
+        $dompdf = new Dompdf();
+        $option = new Options([
+            'tempDir' => storage_path(),
+            'fontDir' => storage_path(),
+            'fontCache' => storage_path(),
+            'isPhpEnabled' => true,
+            'isRemoteEnabled' => true
+        ]);
+        $dompdf->setOptions($option);
+        $dompdf->loadHtml($view);
+        $dompdf->setPaper('A4', 'portrait');
+
+        $dompdf->render();
+        header('Content-type: application/pdf');
+        header('Content-Disposition: inline; filename="warrant.pdf"');
+        header('Content-Transfer-Encoding: binary');
+        header('Accept-Ranges: bytes');
+
+        $dompdf->stream('warrant.pdf', ['Attachment' => 0]);
+    }
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//    /**
+//     * Display a listing of the resource.
+//     *
+//     * @return \Illuminate\Http\Response
+//     */
+//    public function index()
+//    {
+//        return view('index');
+//    }
+//
+//    /**
+//     * Show the form for creating a new resource.
+//     *
+//     * @return \Illuminate\Http\Response
+//     */
+//    public function create()
+//    {
+//        $applicants = DB::table('Client')->select('DCLink', 'Account', 'Name')->get();
+//        return view('create')->withImprest(Imprest::all())
+//            ->withApplicants($applicants);
+//    }
+//
+//    /**
+//     * Store a newly created resource in storage.
+//     *
+//     * @param  \Illuminate\Http\Request  $request
+//     * @return \Illuminate\Http\Response
+//     */
+//    public function store(Request $request)
+//    {
+//        //
+//    }
+//
+//    /**
+//     * Display the specified resource.
+//     *
+//     * @param  int  $id
+//     * @return \Illuminate\Http\Response
+//     */
+//    public function show($id)
+//    {
+//        //
+//    }
+//
+//    /**
+//     * Show the form for editing the specified resource.
+//     *
+//     * @param  int  $id
+//     * @return \Illuminate\Http\Response
+//     */
+//    public function edit($id)
+//    {
+//        //
+//    }
+//
+//    /**
+//     * Update the specified resource in storage.
+//     *
+//     * @param  \Illuminate\Http\Request  $request
+//     * @param  int  $id
+//     * @return \Illuminate\Http\Response
+//     */
+//    public function update(Request $request, $id)
+//    {
+//        //
+//    }
+//
+//    /**
+//     * Remove the specified resource from storage.
+//     *
+//     * @param  int  $id
+//     * @return \Illuminate\Http\Response
+//     */
+//    public function destroy($id)
+//    {
+//        //
+//    }
+}

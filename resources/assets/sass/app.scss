@@ -1,0 +1,40 @@
+
+// Fonts
+@import url(https://fonts.googleapis.com/css?family=Raleway:300,400,600);
+
+// Variables
+@import "variables";
+
+// Bootstrap
+@import "node_modules/bootstrap-sass/assets/stylesheets/bootstrap";
+@import "./plugins/bootstrap-datepicker";
+
+.icon-required{
+  color:red;
+}
+
+.infolert {
+  position: fixed;
+  top: 60px;
+  right: 10px;
+  max-width: 400px;
+  z-index: 900000;
+}
+
+#alertConfirm {
+  position: fixed;
+  top: 80px;
+  left: 0;
+  z-index: 9000;
+  width: 100%;
+
+  div.alert {
+    margin: 0 auto;
+    width: 300px;
+  }
+
+  div p {
+    padding-top: 20px;
+    text-align: center;
+  }
+}
